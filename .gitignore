@@ -1,0 +1,10 @@
+# Private WiFi credentials — copy secrets.example.h to secrets.h locally
+clawd_artemis/secrets.h
+
+# Flash backups / firmware binaries (4MB each; stock firmware belongs to CircuitMess)
+*.bin
+
+# Local tooling
+.venv*/
+*.log
+.DS_Store
