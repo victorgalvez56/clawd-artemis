@@ -76,7 +76,8 @@ uint16_t C_ORANGE, C_DARKBG, C_MUTED, C_GREEN, C_RED;
 #define VIEW_USAGE  5
 #define VIEW_NOTIF  6
 #define VIEW_SET    7
-#define VIEW_N      8
+#define VIEW_MENU   8
+#define VIEW_N      8    // views in the UP/DOWN cycle (menu is reached via ALT)
 uint8_t currentView = VIEW_WATCH;
 // Button order: DOWN from the watchface → notifications; UP → settings
 const uint8_t VIEW_ORDER[VIEW_N] = { VIEW_WATCH, VIEW_NOTIF, VIEW_EYES, VIEW_SQUISH,
@@ -89,6 +90,21 @@ uint8_t  sleepIdx = 2;               // 0=15s 1=30s 2=1m 3=never
 bool     rotFlip  = false;
 uint8_t  setSel   = 0;               // selected row in the settings menu
 const uint32_t SLEEP_MS[4] = { 15000, 30000, 60000, 0 };
+
+// ── Main menu (launcher, ALT opens it) ───────────────────────
+struct MenuEntry { const char* label; uint8_t view; };
+const MenuEntry MENU_ITEMS[] = {
+  { "Reloj",          VIEW_WATCH },
+  { "Uso Claude",     VIEW_USAGE },
+  { "Notificaciones", VIEW_NOTIF },
+  { "Ojos",           VIEW_EYES },
+  { "Acuario",        VIEW_AQUA },
+  { "Bola 8",         VIEW_BALL },
+  { "Ajustes",        VIEW_SET },
+};
+#define MENU_N   ((uint8_t)(sizeof(MENU_ITEMS) / sizeof(MENU_ITEMS[0])))
+#define MENU_VIS 5                     // rows visible at once
+uint8_t menuSel = 0, menuTop = 0;
 
 // ── Notifications (pushed via notif=<text> over USB/BLE) ─────
 #define NOTIF_MAX 8
@@ -754,6 +770,58 @@ void applyStat(const String& k, const String& v) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  MAIN MENU  (launcher with scroll — ALT opens, SEL launches)
+// ═══════════════════════════════════════════════════════════════
+
+void drawMenuScrollbar() {
+  tft.fillRect(124, 18, 4, MENU_VIS * 18, C_MENU_BG);
+  tft.fillRect(126, 18, 2, MENU_VIS * 18, C_MENU_LINE);
+  int track = MENU_VIS * 18;
+  int th = track * MENU_VIS / MENU_N;
+  int ty = 18 + (track - th) * menuTop / (MENU_N - MENU_VIS);
+  tft.fillRect(126, ty, 2, th, C_MENU_TXT2);
+}
+
+void drawMenuRow(uint8_t i) {
+  if (i < menuTop || i >= menuTop + MENU_VIS) return;
+  int y = 18 + (i - menuTop) * 18;
+  tft.fillRect(0, y, 124, 18, C_MENU_BG);
+  if (i == menuSel) tft.fillRoundRect(2, y, 120, 17, 5, C_MENU_HI);
+  tft.setTextSize(1);
+  tft.setTextColor(C_WHITE);
+  tft.setCursor(8, y + 5); tft.print(MENU_ITEMS[i].label);
+  if (MENU_ITEMS[i].view == VIEW_NOTIF && notifUnread) {   // unread counter
+    char b[4]; snprintf(b, sizeof(b), "%d", notifUnread > 9 ? 9 : notifUnread);
+    tft.setTextColor(C_ORANGE);
+    tft.setCursor(114 - strlen(b) * 6, y + 5); tft.print(b);
+  }
+}
+
+void drawMenuView() {
+  tft.fillScreen(C_MENU_BG);
+  tft.setTextSize(1); tft.setTextColor(C_MENU_TXT2);
+  tft.setCursor(6, 5); tft.print("Menu");
+  for (uint8_t i = 0; i < MENU_N; i++) drawMenuRow(i);
+  drawMenuScrollbar();
+  tft.setTextColor(C_MENU_TXT2);
+  tft.setCursor(4, 115); tft.print("SEL abre, ALT reloj");
+}
+
+void menuMove(int8_t d) {
+  uint8_t o = menuSel;
+  menuSel = (menuSel + MENU_N + d) % MENU_N;
+  uint8_t oldTop = menuTop;
+  if (menuSel < menuTop) menuTop = menuSel;
+  if (menuSel >= menuTop + MENU_VIS) menuTop = menuSel - (MENU_VIS - 1);
+  if (menuTop != oldTop) {              // scrolled → repaint the whole list
+    for (uint8_t i = 0; i < MENU_N; i++) drawMenuRow(i);
+    drawMenuScrollbar();
+  } else {
+    drawMenuRow(o); drawMenuRow(menuSel);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  SETTINGS  (SEL long opens it; persisted in NVS like stock)
 // ═══════════════════════════════════════════════════════════════
 const char* SET_LABELS[5] = { "Brillo", "Sonido", "Pantalla off", "Rotacion", "LEDs" };
@@ -879,6 +947,7 @@ void showView(uint8_t v) {
     case VIEW_USAGE:  drawUsageView(); break;
     case VIEW_NOTIF:  drawNotifView(); break;
     case VIEW_SET:    setSel = 0; drawSettingsView(); break;
+    case VIEW_MENU:   drawMenuView(); break;
   }
 }
 
@@ -891,6 +960,13 @@ Btn btns[4] = { { PIN_BTN_UP }, { PIN_BTN_DOWN }, { PIN_BTN_SEL }, { PIN_BTN_ALT
 
 void btnShort(uint8_t i) {
   chirpBtn();
+  if (currentView == VIEW_MENU) {         // launcher: scroll + open
+    if      (i == 0) menuMove(-1);
+    else if (i == 1) menuMove(1);
+    else if (i == 2) showView(MENU_ITEMS[menuSel].view);
+    else showView(VIEW_WATCH);
+    return;
+  }
   if (currentView == VIEW_SET) {          // modal: buttons drive the menu
     uint8_t o = setSel;
     if      (i == 0) { setSel = (setSel + 4) % 5; drawSettingsRow(o); drawSettingsRow(setSel); }
@@ -915,7 +991,7 @@ void btnShort(uint8_t i) {
         tft.setCursor(64 - strlen(s) * 3, 117); tft.print(s);
       }
       break;
-    case 3: showView(VIEW_WATCH); break;                             // ALT
+    case 3: showView(VIEW_MENU); break;                              // ALT → main menu
   }
 }
 
@@ -1094,6 +1170,7 @@ void handleSerialLine(const String& line) {
     case 'o': showView(VIEW_BALL);   break;
     case 'u': showView(VIEW_USAGE);  break;
     case 'c': showView(VIEW_SET);    break;
+    case 'M': showView(VIEW_MENU);   break;
     case 'r': showView(VIEW_BALL); roll8Ball(); break;
     case 'h': popHearts();           break;
     case 'l': ledsOn = !ledsOn; Serial.printf("leds=%d\n", ledsOn); break;

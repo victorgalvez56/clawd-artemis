@@ -32,10 +32,12 @@ and adapted to real watch hardware: buttons, battery, buzzer, RTC, and BLE.
 |---|---|---|
 | UP / DOWN | previous / next view | — |
 | SELECT | action: roll 8-ball · pop hearts · clear notifications · battery detail | **settings** |
-| ALT | back to watchface | **power off** (1.5 s) |
+| ALT | **main menu** | **power off** (1.5 s) |
 
-View order: watchface → notifications → eyes → squish → aquarium → 8-ball → usage → settings.
-Inside settings: UP/DOWN select a row, SELECT changes the value, ALT exits.
+**Main menu**: a scrollable launcher (with scrollbar and unread-notification counter) listing every
+screen — UP/DOWN scroll, SELECT opens, ALT jumps back to the watchface. UP/DOWN outside the menu
+still cycle views directly: watchface → notifications → eyes → squish → aquarium → 8-ball →
+usage → settings. Inside settings: UP/DOWN select a row, SELECT changes the value, ALT exits.
 
 ## Hardware
 
