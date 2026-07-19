@@ -21,6 +21,8 @@ and adapted to real watch hardware: buttons, battery, buzzer, RTC, and BLE.
   Automatic alerts when a Claude limit crosses 70% / 90% or the 5h window resets.
 - **Clawd faces** — normal eyes, squish eyes (auto-blink + mood toggle), aquarium with fish and
   a little crab, magic 8-ball in Spanish.
+- **Settings menu** (like the stock firmware) — brightness, sound on/off, screen-off timeout,
+  screen rotation, LEDs on/off. Persisted to NVS flash, so they survive reboots and reflashes.
 - Buzzer chirps, quadratic backlight dimming with idle sleep, real power-off via the power latch,
   battery reading with the board's Vref switch handled correctly.
 
@@ -29,10 +31,11 @@ and adapted to real watch hardware: buttons, battery, buzzer, RTC, and BLE.
 | Button | Short press | Long press |
 |---|---|---|
 | UP / DOWN | previous / next view | — |
-| SELECT | action: roll 8-ball · pop hearts · clear notifications · battery detail | brightness toggle |
+| SELECT | action: roll 8-ball · pop hearts · clear notifications · battery detail | **settings** |
 | ALT | back to watchface | **power off** (1.5 s) |
 
-View order: watchface → notifications → eyes → squish → aquarium → 8-ball → usage.
+View order: watchface → notifications → eyes → squish → aquarium → 8-ball → usage → settings.
+Inside settings: UP/DOWN select a row, SELECT changes the value, ALT exits.
 
 ## Hardware
 

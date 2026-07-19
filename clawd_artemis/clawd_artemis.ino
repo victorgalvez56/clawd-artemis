@@ -24,6 +24,7 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLE2902.h>
+#include <Preferences.h>
 
 // ── Pins (Artemis board revision 2) ───────────────────────────
 #define PIN_BTN_UP    1
@@ -74,11 +75,20 @@ uint16_t C_ORANGE, C_DARKBG, C_MUTED, C_GREEN, C_RED;
 #define VIEW_BALL   4
 #define VIEW_USAGE  5
 #define VIEW_NOTIF  6
-#define VIEW_N      7
+#define VIEW_SET    7
+#define VIEW_N      8
 uint8_t currentView = VIEW_WATCH;
-// Button order: DOWN from the watchface goes straight to notifications
+// Button order: DOWN from the watchface → notifications; UP → settings
 const uint8_t VIEW_ORDER[VIEW_N] = { VIEW_WATCH, VIEW_NOTIF, VIEW_EYES, VIEW_SQUISH,
-                                     VIEW_AQUA, VIEW_BALL, VIEW_USAGE };
+                                     VIEW_AQUA, VIEW_BALL, VIEW_USAGE, VIEW_SET };
+
+// ── Settings (persisted in NVS, like the stock firmware) ─────
+Preferences prefs;
+bool     soundOn  = true;
+uint8_t  sleepIdx = 2;               // 0=15s 1=30s 2=1m 3=never
+bool     rotFlip  = false;
+uint8_t  setSel   = 0;               // selected row in the settings menu
+const uint32_t SLEEP_MS[4] = { 15000, 30000, 60000, 0 };
 
 // ── Notifications (pushed via notif=<text> over USB/BLE) ─────
 #define NOTIF_MAX 8
@@ -214,6 +224,7 @@ static const int16_t LOGO_TRIS[][6] PROGMEM = {
 // ═══════════════════════════════════════════════════════════════
 
 void tone1(uint16_t f, uint16_t ms) {
+  if (!soundOn) { delay(ms); return; }
   ledcWriteTone(PIN_BUZZ, f);
   delay(ms);
   ledcWriteTone(PIN_BUZZ, 0);
@@ -248,9 +259,10 @@ void ledsApply(bool on) {
 
 void backlightTick() {
   unsigned long idle = millis() - lastActive;
-  if (idle > 60000 && !usbIn) { screenOff = true; blApply(0); }
-  else if (idle > 20000)      { blApply(blLevel > 30 ? 30 : blLevel); }
-  else                        { blApply(blLevel); }
+  uint32_t offMs = SLEEP_MS[sleepIdx];
+  if (offMs && idle > offMs && !usbIn)   { screenOff = true; blApply(0); }
+  else if (offMs && idle > offMs * 2/3)  { blApply(blLevel > 30 ? 30 : blLevel); }
+  else                                   { blApply(blLevel); }
   ledsApply(ledsOn && !screenOff);   // LEDs sleep with the screen
 }
 
@@ -742,6 +754,71 @@ void applyStat(const String& k, const String& v) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  SETTINGS  (SEL long opens it; persisted in NVS like stock)
+// ═══════════════════════════════════════════════════════════════
+const char* SET_LABELS[5] = { "Brillo", "Sonido", "Pantalla off", "Rotacion", "LEDs" };
+
+void saveSettings() {
+  prefs.putUChar("bl", blLevel);
+  prefs.putBool("snd", soundOn);
+  prefs.putUChar("slp", sleepIdx);
+  prefs.putBool("rot", rotFlip);
+  prefs.putBool("led", ledsOn);
+}
+
+void applyRotation() {
+  tft.setRotation(rotFlip ? 1 : 3);
+}
+
+String setValue(uint8_t i) {
+  switch (i) {
+    case 0: return String(blLevel) + "%";
+    case 1: return soundOn ? "On" : "Off";
+    case 2: { const char* s[4] = { "15s", "30s", "1m", "Nunca" }; return s[sleepIdx]; }
+    case 3: return rotFlip ? "Invertida" : "Normal";
+    case 4: return ledsOn ? "On" : "Off";
+  }
+  return "";
+}
+
+void drawSettingsRow(uint8_t i) {
+  int y = 18 + i * 18;
+  tft.fillRect(0, y, 128, 18, C_MENU_BG);
+  if (i == setSel) tft.fillRoundRect(2, y, 124, 17, 5, C_MENU_HI);
+  tft.setTextSize(1);
+  tft.setTextColor(C_WHITE);
+  tft.setCursor(8, y + 5); tft.print(SET_LABELS[i]);
+  String v = setValue(i);
+  tft.setTextColor(C_MENU_TXT2);
+  tft.setCursor(120 - v.length() * 6, y + 5); tft.print(v);
+}
+
+void drawSettingsView() {
+  tft.fillScreen(C_MENU_BG);
+  tft.setTextSize(1); tft.setTextColor(C_MENU_TXT2);
+  tft.setCursor(6, 5); tft.print("Ajustes");
+  for (uint8_t i = 0; i < 5; i++) drawSettingsRow(i);
+  tft.setTextColor(C_MENU_TXT2);
+  tft.setCursor(4, 115); tft.print("SEL cambia, ALT sale");
+}
+
+void settingsCycle() {
+  switch (setSel) {
+    case 0:
+      blLevel = blLevel >= 100 ? 20 : (blLevel <= 20 ? 40 : (blLevel <= 40 ? 70 : 100));
+      blNow = 255; blApply(blLevel);
+      break;
+    case 1: soundOn = !soundOn; break;
+    case 2: sleepIdx = (sleepIdx + 1) % 4; break;
+    case 3: rotFlip = !rotFlip; applyRotation(); break;
+    case 4: ledsOn = !ledsOn; break;
+  }
+  saveSettings();
+  if (setSel == 3) drawSettingsView();     // rotation redraws everything
+  else drawSettingsRow(setSel);
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  NOTIFICATIONS  (DOWN from the watchface; pushed via notif=<text>)
 // ═══════════════════════════════════════════════════════════════
 
@@ -801,6 +878,7 @@ void showView(uint8_t v) {
     case VIEW_BALL:   draw8Ball(); break;
     case VIEW_USAGE:  drawUsageView(); break;
     case VIEW_NOTIF:  drawNotifView(); break;
+    case VIEW_SET:    setSel = 0; drawSettingsView(); break;
   }
 }
 
@@ -813,6 +891,14 @@ Btn btns[4] = { { PIN_BTN_UP }, { PIN_BTN_DOWN }, { PIN_BTN_SEL }, { PIN_BTN_ALT
 
 void btnShort(uint8_t i) {
   chirpBtn();
+  if (currentView == VIEW_SET) {          // modal: buttons drive the menu
+    uint8_t o = setSel;
+    if      (i == 0) { setSel = (setSel + 4) % 5; drawSettingsRow(o); drawSettingsRow(setSel); }
+    else if (i == 1) { setSel = (setSel + 1) % 5; drawSettingsRow(o); drawSettingsRow(setSel); }
+    else if (i == 2) settingsCycle();
+    else showView(VIEW_WATCH);
+    return;
+  }
   switch (i) {
     case 0: showView(VIEW_ORDER[(viewOrderIdx(currentView) + VIEW_N - 1) % VIEW_N]); break; // UP
     case 1: showView(VIEW_ORDER[(viewOrderIdx(currentView) + 1) % VIEW_N]); break;          // DOWN
@@ -835,10 +921,7 @@ void btnShort(uint8_t i) {
 
 void btnLong(uint8_t i) {
   switch (i) {
-    case 2:                                                          // SELECT: brightness
-      blLevel = (blLevel == 100) ? 40 : 100;
-      chirpView(); blNow = 255; blApply(blLevel);
-      break;
+    case 2: showView(VIEW_SET); break;                               // SELECT: settings
     case 3: powerOff(); break;                                       // ALT: off
     default: btnShort(i); break;
   }
@@ -1010,6 +1093,7 @@ void handleSerialLine(const String& line) {
     case 'm': showView(VIEW_AQUA);   break;
     case 'o': showView(VIEW_BALL);   break;
     case 'u': showView(VIEW_USAGE);  break;
+    case 'c': showView(VIEW_SET);    break;
     case 'r': showView(VIEW_BALL); roll8Ball(); break;
     case 'h': popHearts();           break;
     case 'l': ledsOn = !ledsOn; Serial.printf("leds=%d\n", ledsOn); break;
@@ -1126,6 +1210,14 @@ void setup() {
   C_MENU_BADGE = tft.color565(72, 72, 78);
   C_MENU_LINE  = tft.color565(58, 58, 62);
   C_MENU_TXT2  = tft.color565(152, 152, 158);
+
+  prefs.begin("clawd", false);            // load persisted settings
+  blLevel  = prefs.getUChar("bl", 100);
+  soundOn  = prefs.getBool("snd", true);
+  sleepIdx = prefs.getUChar("slp", 2);
+  rotFlip  = prefs.getBool("rot", false);
+  ledsOn   = prefs.getBool("led", false);
+  applyRotation();
 
   blApply(blLevel);
   lastActive = millis();
