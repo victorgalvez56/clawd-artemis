@@ -9,7 +9,7 @@ import sys
 
 from bleak import BleakClient, BleakScanner
 
-NAME = "Clawd Artemis"
+NAMES = { "Clawd Artemis", "Artemis Watch" }   # Arduino Clawd fw / stock fork
 NUS_RX = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 
 
@@ -33,7 +33,9 @@ async def main() -> None:
     latest = None  # last line seen while disconnected → replay on connect
 
     while True:
-        dev = await BleakScanner.find_device_by_name(NAME, timeout=10)
+        dev = await BleakScanner.find_device_by_filter(
+            lambda d, ad: (d.name in NAMES) or (ad and ad.local_name in NAMES),
+            timeout=10)
         if dev is None:
             print("scan: watch not in range", flush=True)
             # keep draining stdin so the pipe never fills; remember only the latest
