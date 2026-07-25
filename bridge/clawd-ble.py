@@ -25,7 +25,9 @@ async def write_line(client: BleakClient, line: bytes) -> None:
         line += b"\n"
     chunk = max(20, (client.mtu_size or 23) - 3)
     for i in range(0, len(line), chunk):
-        await client.write_gatt_char(NUS_RX, line[i:i + chunk], response=False)
+        # write WITH response: the stock Artemis RX char only accepts Write
+        # Requests — Write Commands (no response) are silently dropped.
+        await client.write_gatt_char(NUS_RX, line[i:i + chunk], response=True)
 
 
 async def main() -> None:
